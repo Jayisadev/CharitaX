@@ -59,8 +59,8 @@
   (ok (var-get charity-percentage))
 )
 
-;; Public functions
-(define-public (transfer (amount uint) (sender principal) (recipient principal))
+;; Private transfer helper function
+(define-private (transfer-tokens (amount uint) (sender principal) (recipient principal))
   (let
     (
       (charity-amount (/ (* amount (var-get charity-percentage)) u1000))
@@ -68,13 +68,40 @@
       (charity-addr (var-get charity-wallet))
     )
     (begin
-      (asserts! (is-eq tx-sender sender) err-not-token-owner)
       (asserts! (> amount u0) err-invalid-amount)
       (asserts! (not (is-eq recipient charity-addr)) err-invalid-recipient)
+      (asserts! (<= amount (ft-get-balance charity-dao sender)) err-insufficient-balance)
       (try! (ft-transfer? charity-dao charity-amount sender charity-addr))
       (try! (ft-transfer? charity-dao recipient-amount sender recipient))
       (ok true)
     )
+  )
+)
+
+;; Public functions
+(define-public (transfer (amount uint) (sender principal) (recipient principal))
+  (begin
+    (asserts! (is-eq tx-sender sender) err-not-token-owner)
+    (asserts! (is-valid-recipient recipient) err-invalid-recipient)
+    (asserts! (> amount u0) err-invalid-amount)
+    (asserts! (<= amount (ft-get-balance charity-dao sender)) err-insufficient-balance)
+    (transfer-tokens amount sender recipient)
+  )
+)
+
+;; Define a tuple for batch transfer
+(define-private (process-transfer (transfer-data {amount: uint, recipient: principal}) (previous-result (response bool uint)))
+  (match previous-result
+    result (transfer-tokens (get amount transfer-data) tx-sender (get recipient transfer-data))
+    error previous-result
+  )
+)
+
+;; Fixed batch transfer function
+(define-public (batch-transfer (transfers (list 200 {amount: uint, recipient: principal})))
+  (begin
+    (asserts! (<= (len transfers) u10) err-invalid-amount)
+    (fold process-transfer transfers (ok true))
   )
 )
 
@@ -141,25 +168,17 @@
 
 ;; Helper functions
 (define-private (is-valid-recipient (recipient principal))
-  (begin
-    (is-eq recipient contract-owner)
-  )
+  (not (is-eq recipient tx-sender))
 )
 
 (define-private (is-valid-proposal-id (proposal-id uint))
-  (begin
-    (> proposal-id u0)
-  )
+  (> proposal-id u0)
 )
 
 (define-private (is-valid-uri (uri (optional (string-utf8 256))))
-  (begin
-    (is-some uri)
-  )
+  (is-some uri)
 )
 
 (define-private (is-valid-wallet (wallet principal))
-  (begin
-    (is-eq wallet contract-owner)
-  )
+  (and (not (is-eq wallet tx-sender)) (not (is-eq wallet contract-owner)))
 )
